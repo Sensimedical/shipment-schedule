@@ -63,8 +63,19 @@ SENSIMEDICAL_CSS = """
         text-transform: uppercase;
         color: rgba(255,255,255,0.55);
     }
+    .sm-navbar-center {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        color: #ffffff;
+        font-family: 'DM Sans', sans-serif;
+        font-weight: 600;
+        font-size: 1rem;
+        letter-spacing: -0.01em;
+        pointer-events: none;
+    }
     .sm-navbar-date {
-        color: rgba(255,255,255,0.75);
+        color: #ffffff;
         font-size: 0.85rem;
         font-weight: 500;
         font-family: 'DM Sans', sans-serif;
@@ -73,7 +84,7 @@ SENSIMEDICAL_CSS = """
 
     /* ─── Main content offset for fixed nav ─────────────── */
     .main .block-container {
-        padding-top: 3.8rem !important;
+        padding-top: 5rem !important;
         padding-left: 2.5rem !important;
         padding-right: 2.5rem !important;
         max-width: 1400px !important;
@@ -630,8 +641,8 @@ def render_navbar(logo_path: Path) -> None:
         <div class="sm-navbar">
             <div class="sm-navbar-brand">
                 {logo_html}
-                <span class="sm-navbar-title">Shipment Console</span>
             </div>
+            <div class="sm-navbar-center">Shipment Schedule Console</div>
             <span class="sm-navbar-date">{today_str}</span>
         </div>
         """,
