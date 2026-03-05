@@ -3,6 +3,7 @@ import os
 import sqlite3
 from pathlib import Path
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -45,7 +46,7 @@ SENSIMEDICAL_CSS = """
         align-items: center;
         justify-content: space-between;
         padding: 0 2rem;
-        height: 56px;
+        height: 68px;
         border-bottom: 1px solid rgba(255,255,255,0.06);
         box-shadow: 0 2px 16px rgba(0,0,0,0.25);
     }
@@ -54,7 +55,7 @@ SENSIMEDICAL_CSS = """
         align-items: center;
         gap: 10px;
     }
-    .sm-navbar-brand img { height: 28px; width: auto; }
+    .sm-navbar-brand img { height: 48px; width: auto; }
     .sm-navbar-title {
         font-family: 'DM Sans', sans-serif;
         font-weight: 600;
@@ -84,7 +85,7 @@ SENSIMEDICAL_CSS = """
 
     /* ─── Main content offset for fixed nav ─────────────── */
     .main .block-container {
-        padding-top: 5rem !important;
+        padding-top: 5.5rem !important;
         padding-left: 2.5rem !important;
         padding-right: 2.5rem !important;
         max-width: 1400px !important;
@@ -471,8 +472,13 @@ def apply_overrides(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
                     key_to_modified_at[k_cd] = str(row.get("modified_at") or "")
         df["Scheduled date"] = df["order_key"].map(key_to_date).combine_first(df["Scheduled date"])
         df["Comments"] = df["order_key"].map(key_to_comments).combine_first(df["Comments"].fillna("").astype(str))
-        df["Modified by"] = df["order_key"].map(key_to_modified_by).fillna("")
-        df["Modified at"] = df["order_key"].map(key_to_modified_at).fillna("")
+        # Only show modified_by/at for rows that were actually saved with that info
+        df["Modified by"] = df["order_key"].map(
+            {k: v for k, v in key_to_modified_by.items() if v}
+        ).fillna("")
+        df["Modified at"] = df["order_key"].map(
+            {k: v for k, v in key_to_modified_at.items() if v}
+        ).fillna("")
         df["Scheduled date"] = pd.to_datetime(df["Scheduled date"], errors="coerce").dt.date
     else:
         df["Modified by"] = ""
@@ -542,7 +548,7 @@ def save_overrides(
         )
         if date_is_current and comment.strip() in (NEW_ORDER_COMMENT, PAST_DUE_COMMENT):
             comment = ""
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        now_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
         cur.execute(
             """
             INSERT INTO followup_overrides (order_key, follow_up, comments, modified_by, modified_at)
