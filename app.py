@@ -767,31 +767,48 @@ def main() -> None:
     if "Sales" in df.columns:
         df["Sales"] = pd.to_numeric(df["Sales"], errors="coerce")
 
-    # ─── Resolve logged-in user (auto from Google SSO) ───────
+    # ─── Resolve logged-in user ──────────────────────────────
+    # Try Streamlit Cloud SSO first; fall back to session prompt
+    username = ""
     try:
-        # st.user is the current API; experimental_user is legacy fallback
         user_obj = getattr(st, "user", None) or getattr(st, "experimental_user", None)
-        email = ""
         if user_obj is not None:
-            email = getattr(user_obj, "email", "") or ""
-            # Sometimes it comes back as a dict-like object
-            if not email and hasattr(user_obj, "get"):
-                email = user_obj.get("email", "")
-        username = email if email else "unknown"
+            username = getattr(user_obj, "email", "") or ""
+            if not username and hasattr(user_obj, "get"):
+                username = user_obj.get("email", "")
     except Exception:
-        username = "unknown"
+        pass
+
+    if not username:
+        username = st.session_state.get("username", "")
+
+    if not username:
+        render_navbar(LOGO_PATH)
+        st.markdown(
+            """
+            <div style="max-width:380px;margin:4rem auto;background:#ffffff;border:1px solid #e2e8f0;
+                        border-radius:12px;padding:2rem;box-shadow:0 4px 16px rgba(0,0,0,0.07);">
+                <div style="font-size:1.1rem;font-weight:700;color:#0c1f3a;margin-bottom:0.3rem;">
+                    Who are you?
+                </div>
+                <div style="font-size:0.85rem;color:#64748b;margin-bottom:1.2rem;">
+                    Enter your name so edits are tracked correctly.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        col_inp, col_btn = st.columns([3, 1])
+        with col_inp:
+            name_input = st.text_input("Your name", placeholder="e.g. Tina", label_visibility="collapsed")
+        with col_btn:
+            if st.button("Continue", use_container_width=True) and name_input.strip():
+                st.session_state["username"] = name_input.strip()
+                st.rerun()
+        return
 
     # ─── Navbar ──────────────────────────────────────────────
     render_navbar(LOGO_PATH)
-
-    # ── Temp debug: remove once username is confirmed working ─
-    with st.expander("🔍 Debug: user info", expanded=False):
-        try:
-            st.write("st.user:", dict(st.user) if hasattr(st, "user") else "n/a")
-            st.write("st.experimental_user:", dict(st.experimental_user) if hasattr(st, "experimental_user") else "n/a")
-        except Exception as e:
-            st.write("Error reading user:", e)
-        st.write("Resolved username:", username)
 
     # ─── Hero header + stats ──────────────────────────────────
     render_hero(df)
