@@ -190,7 +190,8 @@ def apply_overrides(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
         overrides["comments"] = ""
     if not overrides.empty:
         overrides["follow_up"] = pd.to_datetime(overrides["follow_up"], errors="coerce").dt.date
-        # Build lookup: support both 3-part keys (Customer|Date|Cases) and old 4-part keys (with Sales)
+        # Build lookup: support both older keys that included extra parts and the new
+        # 2-part Customer|CreatedDate keys
         key_to_date = {}
         key_to_comments = {}
         for _, row in overrides.iterrows():
@@ -198,16 +199,13 @@ def apply_overrides(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
             key_to_date[k] = row["follow_up"]
             key_to_comments[k] = str(row.get("comments") or "")
             parts = k.split("|")
-            if len(parts) >= 4:
-                k_short = "|".join(parts[:3])
-                if k_short not in key_to_date:
-                    key_to_date[k_short] = row["follow_up"]
-                    key_to_comments[k_short] = str(row.get("comments") or "")
+            # If key had extra parts (e.g. Customer|Date|Cases|Sales), also map the
+            # first two segments (Customer|Date) used by the new summary keys.
             if len(parts) >= 2:
-                k_so = parts[0]
-                if k_so not in key_to_date:
-                    key_to_date[k_so] = row["follow_up"]
-                    key_to_comments[k_so] = str(row.get("comments") or "")
+                k_cd = "|".join(parts[:2])
+                if k_cd not in key_to_date:
+                    key_to_date[k_cd] = row["follow_up"]
+                    key_to_comments[k_cd] = str(row.get("comments") or "")
         df["Scheduled date"] = df["order_key"].map(key_to_date).combine_first(df["Scheduled date"])
         df["Comments"] = df["order_key"].map(key_to_comments).combine_first(df["Comments"].fillna("").astype(str))
         # Ensure Scheduled date is a proper date type for display
