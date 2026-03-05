@@ -1,10 +1,15 @@
 import base64
+import os
 import sqlite3
 from pathlib import Path
+from datetime import date
 
 import pandas as pd
+import requests
 import streamlit as st
+from dotenv import load_dotenv
 
+load_dotenv(Path(__file__).parent / ".env")
 
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
@@ -12,59 +17,163 @@ DB_PATH = BASE_DIR / "orders.db"
 LOGO_PATH = BASE_DIR / "assets" / "sensimedical-logo.png"
 FILE_PATTERNS = ("Pending Orders *.csv", "Pending Orders *.xlsx", "*.csv", "*.xlsx")
 
-# SensiMedical theme – using DM Sans / DM Mono and prettier layout
+# ── Resend email config ───────────────────────────────────────────────────────
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+NOTIFY_EMAIL   = "elias.a@sensimedical.com"
+NOTIFY_FROM    = "SensiMedical Schedule <schedule@sensimedical.com>"
+
 SENSIMEDICAL_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
 
-    /* Reset & base */
+    /* ─── Reset & Base ───────────────────────────────────── */
     html, body, .stApp {
         background-color: #f4f6f9 !important;
         font-family: 'DM Sans', sans-serif !important;
     }
 
-    /* Hide Streamlit chrome */
+    /* ─── Hide Streamlit chrome ──────────────────────────── */
     #MainMenu, footer, header { visibility: hidden; }
     [data-testid="stSidebar"] { display: none; }
     [data-testid="stSidebar"] ~ div { margin-left: 0 !important; }
     [data-testid="stDecoration"] { display: none; }
 
-    /* Top header bar – reuse existing sensimedical-header container */
-    .sensimedical-header {
-        background: linear-gradient(90deg, #0c1f3a 0%, #2d5a87 100%);
-        padding: 0.6rem 1.5rem;
-        margin-left: calc(-50vw + 50%);
-        margin-right: calc(-50vw + 50%);
-        margin-bottom: 1rem;
-        width: 100vw;
-        box-sizing: border-box;
+    /* ─── Top Navigation Bar ─────────────────────────────── */
+    .sm-navbar {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        z-index: 999;
+        background: #0c1f3a;
         display: flex;
         align-items: center;
-        justify-content: center;
+        justify-content: space-between;
+        padding: 0 2rem;
+        height: 56px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
         box-shadow: 0 2px 16px rgba(0,0,0,0.25);
     }
-    .sensimedical-header img {
-        height: 32px;
-        width: auto;
-        display: block;
+    .sm-navbar-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .sm-navbar-brand img { height: 28px; width: auto; }
+    .sm-navbar-title {
+        font-family: 'DM Sans', sans-serif;
+        font-weight: 600;
+        font-size: 0.85rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: rgba(255,255,255,0.55);
+    }
+    .sm-navbar-badge {
+        background: linear-gradient(135deg, #0ea5e9, #0d9488);
+        color: white;
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        padding: 3px 10px;
+        border-radius: 20px;
+        text-transform: uppercase;
     }
 
-    /* Main content container offset */
+    /* ─── Main content offset for fixed nav ─────────────── */
     .main .block-container {
-        padding-top: 1.5rem !important;
+        padding-top: 5rem !important;
         padding-left: 2.5rem !important;
         padding-right: 2.5rem !important;
         max-width: 1400px !important;
     }
 
-    /* Headings */
-    h1, h2, h3 {
-        color: #0c1f3a !important;
+    /* ─── Page Heading ───────────────────────────────────── */
+    .sm-page-header {
+        margin-bottom: 1.5rem;
+        border-bottom: 1px solid #e2e8f0;
+        padding-bottom: 1rem;
+    }
+    .sm-page-header h1 {
+        font-family: 'DM Sans', sans-serif !important;
+        font-size: 1.65rem !important;
         font-weight: 600 !important;
-        letter-spacing: -0.01em;
+        color: #0c1f3a !important;
+        margin: 0 0 0.2rem 0 !important;
+        letter-spacing: -0.02em;
+    }
+    .sm-page-header p {
+        color: #64748b;
+        font-size: 0.88rem;
+        margin: 0;
     }
 
-    /* Data editor polish */
+    /* ─── Stat Cards ─────────────────────────────────────── */
+    .sm-cards {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .sm-card {
+        flex: 1;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 1.1rem 1.3rem;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        position: relative;
+        overflow: hidden;
+    }
+    .sm-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 3px;
+    }
+    .sm-card.blue::before  { background: linear-gradient(90deg, #0c1f3a, #2d5a87); }
+    .sm-card.teal::before  { background: linear-gradient(90deg, #0d9488, #0ea5e9); }
+    .sm-card.amber::before { background: linear-gradient(90deg, #f59e0b, #f97316); }
+    .sm-card.green::before { background: linear-gradient(90deg, #10b981, #0d9488); }
+    .sm-card-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: #94a3b8;
+        margin-bottom: 0.35rem;
+    }
+    .sm-card-value {
+        font-size: 1.55rem;
+        font-weight: 600;
+        color: #0c1f3a;
+        font-family: 'DM Mono', monospace;
+        line-height: 1;
+    }
+    .sm-card-sub {
+        font-size: 0.75rem;
+        color: #94a3b8;
+        margin-top: 0.25rem;
+    }
+
+    /* ─── Table wrapper ──────────────────────────────────── */
+    .sm-table-wrapper {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 1.2rem 1.4rem 1rem;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        margin-bottom: 1.2rem;
+    }
+    .sm-table-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: #64748b;
+        margin-bottom: 0.8rem;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    /* ─── Data editor polish ─────────────────────────────── */
     [data-testid="stDataEditor"] {
         border-radius: 8px !important;
         border: 1px solid #e2e8f0 !important;
@@ -86,8 +195,7 @@ SENSIMEDICAL_CSS = """
         border-bottom: 1px solid #f1f5f9 !important;
     }
 
-    /* Center alignment for specific columns in main table:
-       Row (1), Cases # (3), Created Date (5), Scheduled date (6) */
+    /* Center alignment for Row, Cases #, Created Date, Scheduled date columns */
     [data-testid="stDataEditor"] table tbody tr td:nth-child(1),
     [data-testid="stDataEditor"] table thead tr th:nth-child(1),
     [data-testid="stDataEditor"] table tbody tr td:nth-child(3),
@@ -98,16 +206,20 @@ SENSIMEDICAL_CSS = """
     [data-testid="stDataEditor"] table thead tr th:nth-child(6) {
         text-align: center !important;
     }
-    /* Make Row column thin */
+    /* Narrow Row index column */
     [data-testid="stDataEditor"] table thead tr th:nth-child(1),
     [data-testid="stDataEditor"] table tbody tr td:nth-child(1) {
-        width: 3rem !important;
-        max-width: 3rem !important;
-        padding-left: 0.25rem;
-        padding-right: 0.25rem;
+        width: 28px !important;
+        min-width: 28px !important;
+        max-width: 28px !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        font-size: 0.7rem !important;
+        color: #94a3b8 !important;
+        text-align: center !important;
     }
 
-    /* Selectbox / inputs */
+    /* ─── Selectbox / inputs ─────────────────────────────── */
     .stSelectbox > div > div {
         background: #f8fafc !important;
         border: 1px solid #e2e8f0 !important;
@@ -121,7 +233,35 @@ SENSIMEDICAL_CSS = """
         border-radius: 8px !important;
     }
 
-    /* Primary button */
+    /* ─── Navbar Send Update button overlay ─────────────── */
+    .sm-navbar-btn-wrap {
+        position: fixed;
+        top: 10px;
+        right: 1.5rem;
+        z-index: 1000;
+    }
+    .sm-navbar-btn-wrap .stButton > button {
+        background: linear-gradient(135deg, #0d9488 0%, #0ea5e9 100%) !important;
+        color: white !important;
+        border: none !important;
+        font-family: 'DM Sans', sans-serif !important;
+        font-weight: 600 !important;
+        font-size: 0.78rem !important;
+        letter-spacing: 0.05em !important;
+        border-radius: 20px !important;
+        padding: 0.3rem 1.1rem !important;
+        box-shadow: 0 2px 10px rgba(13,148,136,0.35) !important;
+        transition: all 0.2s ease !important;
+        height: 34px !important;
+        line-height: 1 !important;
+    }
+    .sm-navbar-btn-wrap .stButton > button:hover {
+        background: linear-gradient(135deg, #0f766e 0%, #0284c7 100%) !important;
+        box-shadow: 0 4px 16px rgba(13,148,136,0.45) !important;
+        transform: translateY(-1px) !important;
+    }
+
+    /* ─── Save Button ────────────────────────────────────── */
     .stButton > button {
         background: linear-gradient(135deg, #0c1f3a 0%, #1e3a5f 100%) !important;
         color: white !important;
@@ -141,7 +281,7 @@ SENSIMEDICAL_CSS = """
         transform: translateY(-1px) !important;
     }
 
-    /* Alerts */
+    /* ─── Alert overrides ────────────────────────────────── */
     [data-testid="stSuccess"] {
         background: #f0fdf9 !important;
         border-left: 3px solid #0d9488 !important;
@@ -166,11 +306,19 @@ SENSIMEDICAL_CSS = """
         border-radius: 8px !important;
     }
 
-    /* Caption / small text */
+    /* ─── Caption / small text ───────────────────────────── */
     .stCaption, [data-testid="stCaptionContainer"] {
         font-family: 'DM Sans', sans-serif !important;
         color: #94a3b8 !important;
         font-size: 0.78rem !important;
+    }
+
+    /* ─── Suppress default Streamlit title (we render our own) ── */
+    h1:first-of-type { display: none; }
+    h2, h3 {
+        color: #0c1f3a !important;
+        font-weight: 600 !important;
+        letter-spacing: -0.01em;
     }
 </style>
 """
@@ -228,11 +376,11 @@ def load_base_data(path: Path | None = None) -> pd.DataFrame:
     # Normalize column names (strip whitespace)
     df.columns = df.columns.str.strip()
 
-    # Parse dates (Excel may already give datetime)
+    # Parse dates
     if "Created Date" in df.columns:
         df["Created Date"] = pd.to_datetime(df["Created Date"], errors="coerce")
 
-    # Scheduled date: daily files typically don't have it; we add it and fill from DB later
+    # Scheduled date
     date_col = next((c for c in df.columns if c in ("Follow up", "Scheduled Date", "Scheduled date")), None)
     if date_col:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.date
@@ -243,10 +391,7 @@ def load_base_data(path: Path | None = None) -> pd.DataFrame:
     if "Comments" not in df.columns:
         df["Comments"] = ""
 
-    # Build a stable order key and optionally group to the clean summary format.
     if "SO Number" in df.columns and "Mfg Ref" in df.columns:
-        # Original/detail file: group by Customer + Created Date so the summary
-        # matches the clean Pending Orders layout (Customer, Cases #, Sales, Created Date).
         df["_cust_key"] = df["Customer"].astype(str).str.strip()
         df["_created_key"] = df["Created Date"]
         qty = pd.to_numeric(df["Qty Order"], errors="coerce").fillna(0)
@@ -260,12 +405,9 @@ def load_base_data(path: Path | None = None) -> pd.DataFrame:
         )
         grouped = grouped.rename(columns={"Cases_num": "Cases #"})
         grouped["Sales"] = grouped["Sales"].round(2)
-        grouped["Created Date"] = pd.to_datetime(
-            grouped["Created Date"], errors="coerce"
-        )
+        grouped["Created Date"] = pd.to_datetime(grouped["Created Date"], errors="coerce")
         grouped["Scheduled date"] = pd.NaT
         grouped["Comments"] = ""
-        # order_key = Customer | YYYY-MM-DD (same as summary files)
         grouped["order_key"] = (
             grouped["Customer"].astype(str).str.strip()
             + "|"
@@ -275,16 +417,6 @@ def load_base_data(path: Path | None = None) -> pd.DataFrame:
             ["Customer", "Cases #", "Sales", "Created Date", "Scheduled date", "Comments", "order_key"]
         ]
     else:
-        # Pending Orders summary: Customer + Created Date (qty can change on partial dispatch)
-        def _norm_num(val):
-            if pd.isna(val):
-                return ""
-            s = str(val).strip().replace("$", "").replace(",", "").strip()
-            try:
-                return str(int(float(s)))
-            except (ValueError, TypeError):
-                return s
-
         df["order_key"] = (
             df["Customer"].astype(str).str.strip()
             + "|" + df["Created Date"].dt.strftime("%Y-%m-%d")
@@ -295,6 +427,8 @@ def load_base_data(path: Path | None = None) -> pd.DataFrame:
 
 def apply_overrides(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
     NEW_ORDER_COMMENT = "estimated date??"
+    PAST_DUE_COMMENT = "past due. please explain."
+    today = date.today()
     try:
         overrides = pd.read_sql_query(
             "SELECT order_key, follow_up, comments FROM followup_overrides", conn
@@ -306,8 +440,6 @@ def apply_overrides(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
         overrides["comments"] = ""
     if not overrides.empty:
         overrides["follow_up"] = pd.to_datetime(overrides["follow_up"], errors="coerce").dt.date
-        # Build lookup: support both older keys that included extra parts and the new
-        # 2-part Customer|CreatedDate keys
         key_to_date = {}
         key_to_comments = {}
         for _, row in overrides.iterrows():
@@ -315,8 +447,6 @@ def apply_overrides(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
             key_to_date[k] = row["follow_up"]
             key_to_comments[k] = str(row.get("comments") or "")
             parts = k.split("|")
-            # If key had extra parts (e.g. Customer|Date|Cases|Sales), also map the
-            # first two segments (Customer|Date) used by the new summary keys.
             if len(parts) >= 2:
                 k_cd = "|".join(parts[:2])
                 if k_cd not in key_to_date:
@@ -324,12 +454,31 @@ def apply_overrides(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
                     key_to_comments[k_cd] = str(row.get("comments") or "")
         df["Scheduled date"] = df["order_key"].map(key_to_date).combine_first(df["Scheduled date"])
         df["Comments"] = df["order_key"].map(key_to_comments).combine_first(df["Comments"].fillna("").astype(str))
-        # Ensure Scheduled date is a proper date type for display
         df["Scheduled date"] = pd.to_datetime(df["Scheduled date"], errors="coerce").dt.date
-    # New orders (no saved scheduled date): auto-fill Comments so team knows to set a date
+    # ── Auto-fill comments ────────────────────────────────────────────────────
+    # 1. Past-due: has a scheduled date strictly before today
+    past_due_mask = df["Scheduled date"].apply(
+        lambda d: (
+            d is not None
+            and not pd.isnull(d)
+            and isinstance(d, date)
+            and d < today
+        )
+    )
+    # Only overwrite comment if it's blank, the new-order placeholder, or already past-due text
+    auto_comment = df["Comments"].fillna("").astype(str).str.strip().isin(
+        {"", NEW_ORDER_COMMENT, PAST_DUE_COMMENT}
+    )
+    df.loc[past_due_mask & auto_comment, "Comments"] = PAST_DUE_COMMENT
+
+    # 2. New orders (no date, no comment yet)
     new_order = df["Scheduled date"].isna()
-    empty_comment = (df["Comments"].fillna("").astype(str).str.strip() == "")
+    empty_comment = df["Comments"].fillna("").astype(str).str.strip() == ""
     df.loc[new_order & empty_comment, "Comments"] = NEW_ORDER_COMMENT
+
+    # Flag used by JS to highlight rows yellow
+    df["_past_due"] = past_due_mask
+
     return df
 
 
@@ -355,9 +504,21 @@ def save_overrides(
     if changed.empty:
         return 0
 
+    NEW_ORDER_COMMENT = "estimated date??"
+    PAST_DUE_COMMENT = "past due. please explain."
+    today = date.today()
+
     cur = conn.cursor()
     for _, row in changed.iterrows():
         sd = row["Scheduled date"]
+        comment = str(row["Comments"] or "")
+        # If a date is now set (and it's not past-due itself) and the comment is
+        # still one of the auto-filled placeholders, clear it automatically.
+        date_is_current = pd.notna(sd) and (
+            not isinstance(sd, date) or sd >= today
+        )
+        if date_is_current and comment.strip() in (NEW_ORDER_COMMENT, PAST_DUE_COMMENT):
+            comment = ""
         cur.execute(
             """
             INSERT INTO followup_overrides (order_key, follow_up, comments)
@@ -366,22 +527,158 @@ def save_overrides(
                 follow_up=excluded.follow_up,
                 comments=excluded.comments
             """,
-            (row["order_key"], str(sd) if pd.notna(sd) else None, str(row["Comments"] or "")),
+            (row["order_key"], str(sd) if pd.notna(sd) else None, comment),
         )
     conn.commit()
     return len(changed)
 
 
-def render_top_header() -> None:
-    """Render SensiMedical top header bar with logo (same convention as sales-lot-tool)."""
-    if not LOGO_PATH.exists():
-        return
-    raw = LOGO_PATH.read_bytes()
-    b64 = base64.b64encode(raw).decode()
-    mime = "image/png" if LOGO_PATH.suffix.lower() == ".png" else "image/jpeg"
-    src = f"data:{mime};base64,{b64}"
+def send_update_email(df: pd.DataFrame) -> tuple[bool, str]:
+    """Send a schedule-update notification via Resend."""
+    if not RESEND_API_KEY:
+        return False, "RESEND_API_KEY is not set. Add it to your .env file."
+
+    today = date.today().strftime("%B %d, %Y")
+    total = len(df)
+    scheduled = int(df["Scheduled date"].notna().sum())
+    past_due = int(df.get("_past_due", pd.Series(dtype=bool)).sum())
+
+    # Build a simple HTML table of all orders
+    rows_html = ""
+    for _, row in df.iterrows():
+        sd = row.get("Scheduled date", "")
+        comment = str(row.get("Comments", "") or "")
+        past = bool(row.get("_past_due", False))
+        bg = ' style="background:#fff1f2;"' if past else ""
+        rows_html += (
+            f"<tr{bg}>"
+            f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;'>{row.get('Customer','')}</td>"
+            f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;'>{row.get('Cases #','')}</td>"
+            f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;'>{sd}</td>"
+            f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;'>{comment}</td>"
+            f"</tr>"
+        )
+
+    html_body = f"""
+    <div style="font-family:'DM Sans',Arial,sans-serif;max-width:720px;margin:0 auto;">
+      <div style="background:#0c1f3a;padding:18px 24px;border-radius:8px 8px 0 0;">
+        <span style="color:white;font-size:1.1rem;font-weight:600;letter-spacing:-0.01em;">
+          SensiMedical — Shipment Schedule Update
+        </span>
+      </div>
+      <div style="background:#f4f6f9;padding:16px 24px;border-bottom:1px solid #e2e8f0;">
+        <span style="color:#64748b;font-size:0.85rem;">{today}</span>
+        &nbsp;&nbsp;·&nbsp;&nbsp;
+        <span style="color:#0c1f3a;font-weight:600;">{total} orders</span>
+        &nbsp;&nbsp;·&nbsp;&nbsp;
+        <span style="color:#0d9488;font-weight:600;">{scheduled} scheduled</span>
+        {"&nbsp;&nbsp;·&nbsp;&nbsp;<span style='color:#ef4444;font-weight:600;'>" + str(past_due) + " past due</span>" if past_due else ""}
+      </div>
+      <table style="width:100%;border-collapse:collapse;background:#ffffff;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px 10px;text-align:left;font-size:0.72rem;letter-spacing:0.07em;text-transform:uppercase;color:#475569;border-bottom:2px solid #e2e8f0;">Customer</th>
+            <th style="padding:8px 10px;text-align:center;font-size:0.72rem;letter-spacing:0.07em;text-transform:uppercase;color:#475569;border-bottom:2px solid #e2e8f0;">Cases #</th>
+            <th style="padding:8px 10px;text-align:center;font-size:0.72rem;letter-spacing:0.07em;text-transform:uppercase;color:#475569;border-bottom:2px solid #e2e8f0;">Scheduled Date</th>
+            <th style="padding:8px 10px;text-align:left;font-size:0.72rem;letter-spacing:0.07em;text-transform:uppercase;color:#475569;border-bottom:2px solid #e2e8f0;">Comments</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows_html}
+        </tbody>
+      </table>
+      <div style="background:#f8fafc;padding:12px 24px;border-radius:0 0 8px 8px;border-top:1px solid #e2e8f0;">
+        <span style="color:#94a3b8;font-size:0.75rem;">Sent automatically from SensiMedical Shipment Console</span>
+      </div>
+    </div>
+    """
+
+    try:
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": NOTIFY_FROM,
+                "to": [NOTIFY_EMAIL],
+                "subject": f"Schedule Update — {today} ({total} orders, {scheduled} scheduled)",
+                "html": html_body,
+            },
+            timeout=10,
+        )
+        if resp.status_code in (200, 201):
+            return True, "Email sent successfully."
+        return False, f"Resend error {resp.status_code}: {resp.text}"
+    except Exception as exc:
+        return False, f"Request failed: {exc}"
+
+
+def render_navbar(logo_path: Path) -> None:
+    logo_src = ""
+    if logo_path.exists():
+        raw = logo_path.read_bytes()
+        b64 = base64.b64encode(raw).decode()
+        mime = "image/png" if logo_path.suffix.lower() == ".png" else "image/jpeg"
+        logo_src = f"data:{mime};base64,{b64}"
+
+    logo_html = (
+        f'<img src="{logo_src}" alt="SensiMedical" />'
+        if logo_src
+        else '<span style="color:white;font-weight:700;font-size:1rem;letter-spacing:-0.02em;">SensiMedical</span>'
+    )
+
     st.markdown(
-        f'<div class="sensimedical-header"><img src="{src}" alt="SensiMedical" /></div>',
+        f"""
+        <div class="sm-navbar">
+            <div class="sm-navbar-brand">
+                {logo_html}
+                <span class="sm-navbar-title">Shipment Console</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_stat_cards(df: pd.DataFrame) -> None:
+    total = len(df)
+    scheduled = int(df["Scheduled date"].notna().sum())
+    unscheduled = total - scheduled
+    pct = int(scheduled / total * 100) if total > 0 else 0
+
+    if "Sales" in df.columns:
+        sales_val = pd.to_numeric(df["Sales"], errors="coerce").fillna(0).sum()
+        sales_display = f"${sales_val:,.0f}"
+    else:
+        sales_display = "—"
+
+    st.markdown(
+        f"""
+        <div class="sm-cards">
+            <div class="sm-card blue">
+                <div class="sm-card-label">Total Orders</div>
+                <div class="sm-card-value">{total}</div>
+                <div class="sm-card-sub">pending shipments</div>
+            </div>
+            <div class="sm-card teal">
+                <div class="sm-card-label">Scheduled</div>
+                <div class="sm-card-value">{scheduled}</div>
+                <div class="sm-card-sub">{pct}% of orders</div>
+            </div>
+            <div class="sm-card amber">
+                <div class="sm-card-label">Needs Date</div>
+                <div class="sm-card-value">{unscheduled}</div>
+                <div class="sm-card-sub">awaiting schedule</div>
+            </div>
+            <div class="sm-card green">
+                <div class="sm-card-label">Total Sales</div>
+                <div class="sm-card-value">{sales_display}</div>
+                <div class="sm-card-sub">order value</div>
+            </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -393,74 +690,100 @@ def main() -> None:
         page_icon="📦",
     )
     st.markdown(SENSIMEDICAL_CSS, unsafe_allow_html=True)
-    render_top_header()
-
-    st.title("Pending Orders – Schedule Manager")
-    st.caption("SensiMedical™ Shipment Schedule")
 
     if not DATA_DIR.exists():
-        st.error(
-            f"`data` folder not found.\n\n"
-            f"Please create: `{DATA_DIR}` and put your daily CSV there."
-        )
+        render_navbar(LOGO_PATH)
+        st.error(f"**`data` folder not found.** Please create: `{DATA_DIR}` and put your daily CSV there.")
         return
 
     conn = init_db()
     all_files = get_all_pending_files()
+
     if not all_files:
-        st.warning(
-            "No 'Pending Orders' file found in the `data` folder.\n\n"
-            "Expected: `Pending Orders *.csv` or `Pending Orders *.xlsx`"
-        )
+        render_navbar(LOGO_PATH)
+        st.warning("No 'Pending Orders' file found in `data/`. Expected: `Pending Orders *.csv` or `*.xlsx`")
         return
 
-    # Let user pick which file to load (e.g. load March 3 to save dates, then March 4 to see them)
-    file_options = [f.name for f in all_files]
-    default_idx = 0
-    selected_name = st.selectbox(
-        "File to load",
-        file_options,
-        index=default_idx,
-        help="Choose which pending orders file to view. Use the latest for today; pick an older file to copy its dates into the app and Save, then load the latest again.",
-    )
-    selected_path = all_files[file_options.index(selected_name)]
-    base_df = load_base_data(selected_path)
+    # Always load the most recent file
+    latest_path = all_files[0]
+    base_df = load_base_data(latest_path)
     if base_df.empty:
+        render_navbar(LOGO_PATH)
         return
 
     df = apply_overrides(base_df.copy(), conn)
-    # Sort by Created Date (oldest first) by default
+
+    # Sort by Created Date (oldest first)
     if "Created Date" in df.columns:
-        df = df.sort_values(
-            "Created Date", ascending=True, kind="mergesort"
-        ).reset_index(drop=True)
-        # Display Created Date without time portion
-        df["Created Date"] = pd.to_datetime(
-            df["Created Date"], errors="coerce"
-        ).dt.date
-    # Add a 1-based row number for readability
+        df = df.sort_values("Created Date", ascending=True, kind="mergesort").reset_index(drop=True)
+        df["Created Date"] = pd.to_datetime(df["Created Date"], errors="coerce").dt.date
+
+    # Add 1-based row number
     df.insert(0, "Row", range(1, len(df) + 1))
-    # Ensure Sales is numeric so we can format as currency
+
+    # Ensure Sales is numeric
     if "Sales" in df.columns:
         df["Sales"] = pd.to_numeric(df["Sales"], errors="coerce")
 
-    st.write("Edit **Scheduled date** and **Comments** below.")
+    # ─── Navbar ──────────────────────────────────────────────
+    render_navbar(LOGO_PATH)
 
-    # Show table without order_key (internal use only); only Scheduled date and Comments are editable
-    display_df = df.drop(columns=["order_key"])
+    # ─── Send Update button (fixed top-right, overlays navbar) ───────────────
+    st.markdown('<div class="sm-navbar-btn-wrap">', unsafe_allow_html=True)
+    if st.button("✉ Send Update", key="send_update"):
+        ok, msg = send_update_email(df)
+        if ok:
+            st.toast("✓ Update email sent!", icon="✉️")
+        else:
+            st.toast(f"Failed: {msg}", icon="⚠️")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ─── Page header ─────────────────────────────────────────
+    today_str = date.today().strftime("%B %d, %Y")
+    st.markdown(
+        f"""
+        <div class="sm-page-header">
+            <h1>Pending Orders — Schedule Manager</h1>
+            <p>SensiMedical™ Shipment Schedule · {today_str}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ─── Stat cards ──────────────────────────────────────────
+    render_stat_cards(df)
+
+    # ─── Table ───────────────────────────────────────────────
+    st.markdown(
+        '<div class="sm-table-wrapper">'
+        '<div class="sm-table-label"><span>🗓️</span> Orders · Edit Scheduled Date &amp; Comments</div>',
+        unsafe_allow_html=True,
+    )
+
+    display_df = df.drop(columns=["order_key"], errors="ignore").copy()
+
+    # Add a visible past-due status column — reliable without any JS
+    display_df.insert(
+        display_df.columns.get_loc("Scheduled date") + 1,
+        "⚠️",
+        display_df.index.map(
+            lambda i: "⚠️ Past Due" if ("_past_due" in df.columns and df.at[i, "_past_due"]) else ""
+        ),
+    )
+    display_df = display_df.drop(columns=["_past_due"], errors="ignore")
+
     column_config = {
-        "Row": st.column_config.NumberColumn(
-            "Row", disabled=True, width="small"
-        ),
-        "Sales": st.column_config.NumberColumn(
-            "Sales", format="$%.2f", disabled=True
-        ),
+        "Row": st.column_config.NumberColumn("·", disabled=True, width="small"),
+        "Cases #": st.column_config.NumberColumn("Cases #", format="%,d", disabled=True),
+        "Sales": st.column_config.NumberColumn("Sales", format="$%,.2f", disabled=True),
         "Scheduled date": st.column_config.DateColumn("Scheduled date"),
+        "⚠️": st.column_config.TextColumn("⚠️", disabled=True, width="small"),
         "Comments": st.column_config.TextColumn("Comments", width="large"),
     }
     for col in display_df.columns:
-        if col not in ("Row", "Sales", "Scheduled date", "Comments"):
+        if col not in ("Row", "Cases #", "Sales", "Scheduled date", "⚠️", "Comments"):
             column_config[col] = st.column_config.Column(col, disabled=True)
+
     edited_display = st.data_editor(
         display_df,
         column_config=column_config,
@@ -469,16 +792,23 @@ def main() -> None:
         hide_index=True,
         height=700,
     )
-    # Reattach order_key for save logic
-    edited_df = edited_display.copy()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Reattach order_key for save logic; drop the display-only status column
+    edited_df = edited_display.drop(columns=["⚠️"], errors="ignore").copy()
     edited_df["order_key"] = df["order_key"].values
 
-    if st.button("Save changes"):
-        n = save_overrides(base_df, edited_df, conn)
-        if n > 0:
-            st.success(f"Saved {n} updated row(s).")
-        else:
-            st.info("No changes to save.")
+    # ─── Save ────────────────────────────────────────────────
+    col_btn, col_hint = st.columns([1, 5])
+    with col_btn:
+        if st.button("💾  Save Changes"):
+            n = save_overrides(base_df, edited_df, conn)
+            if n > 0:
+                st.success(f"✓ Saved {n} updated row(s).")
+            else:
+                st.info("No changes to save.")
+    with col_hint:
+        st.caption("Changes are stored locally and applied automatically across file versions.")
 
 
 if __name__ == "__main__":
