@@ -2,7 +2,7 @@ import base64
 import os
 import sqlite3
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pandas as pd
 import requests
@@ -45,7 +45,7 @@ SENSIMEDICAL_CSS = """
         align-items: center;
         justify-content: space-between;
         padding: 0 2rem;
-        height: 68px;
+        height: 56px;
         border-bottom: 1px solid rgba(255,255,255,0.06);
         box-shadow: 0 2px 16px rgba(0,0,0,0.25);
     }
@@ -54,7 +54,7 @@ SENSIMEDICAL_CSS = """
         align-items: center;
         gap: 10px;
     }
-    .sm-navbar-brand img { height: 48px; width: auto; }
+    .sm-navbar-brand img { height: 28px; width: auto; }
     .sm-navbar-title {
         font-family: 'DM Sans', sans-serif;
         font-weight: 600;
@@ -354,15 +354,19 @@ def init_db() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS followup_overrides (
             order_key TEXT PRIMARY KEY,
             follow_up TEXT,
-            comments TEXT
+            comments TEXT,
+            modified_by TEXT,
+            modified_at TEXT
         )
         """
     )
-    try:
-        conn.execute("ALTER TABLE followup_overrides ADD COLUMN comments TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        conn.rollback()
+    # Add columns if upgrading from older schema
+    for col in ("comments TEXT", "modified_by TEXT", "modified_at TEXT"):
+        try:
+            conn.execute(f"ALTER TABLE followup_overrides ADD COLUMN {col}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            conn.rollback()
     conn.commit()
     return conn
 
@@ -436,30 +440,43 @@ def apply_overrides(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
     today = date.today()
     try:
         overrides = pd.read_sql_query(
-            "SELECT order_key, follow_up, comments FROM followup_overrides", conn
+            "SELECT order_key, follow_up, comments, modified_by, modified_at FROM followup_overrides", conn
         )
     except sqlite3.OperationalError:
         overrides = pd.read_sql_query(
             "SELECT order_key, follow_up FROM followup_overrides", conn
         )
         overrides["comments"] = ""
+        overrides["modified_by"] = ""
+        overrides["modified_at"] = ""
     if not overrides.empty:
         overrides["follow_up"] = pd.to_datetime(overrides["follow_up"], errors="coerce").dt.date
         key_to_date = {}
         key_to_comments = {}
+        key_to_modified_by = {}
+        key_to_modified_at = {}
         for _, row in overrides.iterrows():
             k = row["order_key"]
             key_to_date[k] = row["follow_up"]
             key_to_comments[k] = str(row.get("comments") or "")
+            key_to_modified_by[k] = str(row.get("modified_by") or "")
+            key_to_modified_at[k] = str(row.get("modified_at") or "")
             parts = k.split("|")
             if len(parts) >= 2:
                 k_cd = "|".join(parts[:2])
                 if k_cd not in key_to_date:
                     key_to_date[k_cd] = row["follow_up"]
                     key_to_comments[k_cd] = str(row.get("comments") or "")
+                    key_to_modified_by[k_cd] = str(row.get("modified_by") or "")
+                    key_to_modified_at[k_cd] = str(row.get("modified_at") or "")
         df["Scheduled date"] = df["order_key"].map(key_to_date).combine_first(df["Scheduled date"])
         df["Comments"] = df["order_key"].map(key_to_comments).combine_first(df["Comments"].fillna("").astype(str))
+        df["Modified by"] = df["order_key"].map(key_to_modified_by).fillna("")
+        df["Modified at"] = df["order_key"].map(key_to_modified_at).fillna("")
         df["Scheduled date"] = pd.to_datetime(df["Scheduled date"], errors="coerce").dt.date
+    else:
+        df["Modified by"] = ""
+        df["Modified at"] = ""
     # ── Auto-fill comments ────────────────────────────────────────────────────
     # 1. Past-due: has a scheduled date strictly before today
     past_due_mask = df["Scheduled date"].apply(
@@ -488,7 +505,8 @@ def apply_overrides(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
 
 
 def save_overrides(
-    original: pd.DataFrame, edited: pd.DataFrame, conn: sqlite3.Connection
+    original: pd.DataFrame, edited: pd.DataFrame, conn: sqlite3.Connection,
+    username: str = "unknown"
 ) -> int:
     cols = ["order_key", "Scheduled date", "Comments"]
     for c in cols:
@@ -524,15 +542,18 @@ def save_overrides(
         )
         if date_is_current and comment.strip() in (NEW_ORDER_COMMENT, PAST_DUE_COMMENT):
             comment = ""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         cur.execute(
             """
-            INSERT INTO followup_overrides (order_key, follow_up, comments)
-            VALUES (?, ?, ?)
+            INSERT INTO followup_overrides (order_key, follow_up, comments, modified_by, modified_at)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(order_key) DO UPDATE SET
                 follow_up=excluded.follow_up,
-                comments=excluded.comments
+                comments=excluded.comments,
+                modified_by=excluded.modified_by,
+                modified_at=excluded.modified_at
             """,
-            (row["order_key"], str(sd) if pd.notna(sd) else None, comment),
+            (row["order_key"], str(sd) if pd.notna(sd) else None, comment, username, now_str),
         )
     conn.commit()
     return len(changed)
@@ -746,6 +767,13 @@ def main() -> None:
     if "Sales" in df.columns:
         df["Sales"] = pd.to_numeric(df["Sales"], errors="coerce")
 
+    # ─── Resolve logged-in user ──────────────────────────────
+    try:
+        user_info = st.context.headers.get("X-Streamlit-User", "")
+        username = user_info if user_info else st.experimental_user.get("email", "unknown")
+    except Exception:
+        username = "unknown"
+
     # ─── Navbar ──────────────────────────────────────────────
     render_navbar(LOGO_PATH)
 
@@ -778,9 +806,11 @@ def main() -> None:
         "Scheduled date": st.column_config.DateColumn("Scheduled date"),
         "⚠️": st.column_config.TextColumn("⚠️", disabled=True, width="small"),
         "Comments": st.column_config.TextColumn("Comments", width="large"),
+        "Modified by": st.column_config.TextColumn("Modified by", disabled=True, width="medium"),
+        "Modified at": st.column_config.TextColumn("Modified at", disabled=True, width="medium"),
     }
     for col in display_df.columns:
-        if col not in ("Row", "Cases #", "Sales", "Scheduled date", "⚠️", "Comments"):
+        if col not in ("Row", "Cases #", "Sales", "Scheduled date", "⚠️", "Comments", "Modified by", "Modified at"):
             column_config[col] = st.column_config.Column(col, disabled=True)
 
     edited_display = st.data_editor(
@@ -789,7 +819,7 @@ def main() -> None:
         num_rows="fixed",
         use_container_width=True,
         hide_index=True,
-        height=700,
+        height=min(38 + len(display_df) * 35 + 3, 900),
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -801,7 +831,7 @@ def main() -> None:
     col_save, col_mid, col_send = st.columns([2, 6, 2])
     with col_save:
         if st.button("💾  Save Changes", use_container_width=True):
-            n = save_overrides(base_df, edited_df, conn)
+            n = save_overrides(base_df, edited_df, conn, username=username)
             if n > 0:
                 st.success(f"✓ Saved {n} updated row(s).")
             else:
