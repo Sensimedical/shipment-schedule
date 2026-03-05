@@ -7,9 +7,6 @@ from datetime import date
 import pandas as pd
 import requests
 import streamlit as st
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).parent / ".env")
 
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
@@ -18,7 +15,7 @@ LOGO_PATH = BASE_DIR / "assets" / "sensimedical-logo.png"
 FILE_PATTERNS = ("Pending Orders *.csv", "Pending Orders *.xlsx", "*.csv", "*.xlsx")
 
 # ── Resend email config ───────────────────────────────────────────────────────
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_API_KEY = st.secrets.get("RESEND_API_KEY", os.getenv("RESEND_API_KEY", ""))
 NOTIFY_EMAIL   = "elias.a@sensimedical.com"
 NOTIFY_FROM    = "SensiMedical Schedule <schedule@sensimedical.com>"
 
@@ -85,71 +82,59 @@ SENSIMEDICAL_CSS = """
         max-width: 1400px !important;
     }
 
-    /* ─── Page Heading ───────────────────────────────────── */
-    .sm-page-header {
+    /* ─── Hero Header ────────────────────────────────────── */
+    .sm-hero {
+        text-align: center;
+        padding: 2rem 1rem 1.5rem;
         margin-bottom: 1.5rem;
         border-bottom: 1px solid #e2e8f0;
-        padding-bottom: 1rem;
     }
-    .sm-page-header h1 {
+    .sm-hero h1 {
         font-family: 'DM Sans', sans-serif !important;
-        font-size: 1.65rem !important;
-        font-weight: 600 !important;
+        font-size: 2rem !important;
+        font-weight: 700 !important;
         color: #0c1f3a !important;
-        margin: 0 0 0.2rem 0 !important;
-        letter-spacing: -0.02em;
+        margin: 0 0 0.35rem 0 !important;
+        letter-spacing: -0.03em;
     }
-    .sm-page-header p {
+    .sm-hero-date {
+        font-size: 1rem;
         color: #64748b;
-        font-size: 0.88rem;
-        margin: 0;
+        margin-bottom: 1.4rem;
+        font-weight: 400;
     }
-
-    /* ─── Stat Cards ─────────────────────────────────────── */
-    .sm-cards {
-        display: flex;
-        gap: 1rem;
-        margin-bottom: 1.5rem;
-    }
-    .sm-card {
-        flex: 1;
+    .sm-hero-stats {
+        display: inline-flex;
+        gap: 0;
         background: #ffffff;
         border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 1.1rem 1.3rem;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-        position: relative;
+        border-radius: 12px;
+        box-shadow: 0 1px 6px rgba(0,0,0,0.06);
         overflow: hidden;
     }
-    .sm-card::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0;
-        height: 3px;
+    .sm-stat {
+        padding: 0.85rem 2rem;
+        border-right: 1px solid #e2e8f0;
+        min-width: 120px;
     }
-    .sm-card.blue::before  { background: linear-gradient(90deg, #0c1f3a, #2d5a87); }
-    .sm-card.teal::before  { background: linear-gradient(90deg, #0d9488, #0ea5e9); }
-    .sm-card.amber::before { background: linear-gradient(90deg, #f59e0b, #f97316); }
-    .sm-card.green::before { background: linear-gradient(90deg, #10b981, #0d9488); }
-    .sm-card-label {
-        font-size: 0.72rem;
+    .sm-stat:last-child { border-right: none; }
+    .sm-stat-value {
+        font-family: 'DM Mono', monospace;
+        font-size: 1.6rem;
+        font-weight: 600;
+        color: #0c1f3a;
+        line-height: 1;
+        margin-bottom: 0.2rem;
+    }
+    .sm-stat-value.teal  { color: #0d9488; }
+    .sm-stat-value.amber { color: #f59e0b; }
+    .sm-stat-value.green { color: #10b981; }
+    .sm-stat-label {
+        font-size: 0.68rem;
         font-weight: 600;
         letter-spacing: 0.09em;
         text-transform: uppercase;
         color: #94a3b8;
-        margin-bottom: 0.35rem;
-    }
-    .sm-card-value {
-        font-size: 1.55rem;
-        font-weight: 600;
-        color: #0c1f3a;
-        font-family: 'DM Mono', monospace;
-        line-height: 1;
-    }
-    .sm-card-sub {
-        font-size: 0.75rem;
-        color: #94a3b8;
-        margin-top: 0.25rem;
     }
 
     /* ─── Table wrapper ──────────────────────────────────── */
@@ -231,34 +216,6 @@ SENSIMEDICAL_CSS = """
     .stTextInput input {
         background: #f8fafc !important;
         border-radius: 8px !important;
-    }
-
-    /* ─── Navbar Send Update button overlay ─────────────── */
-    .sm-navbar-btn-wrap {
-        position: fixed;
-        top: 10px;
-        right: 1.5rem;
-        z-index: 1000;
-    }
-    .sm-navbar-btn-wrap .stButton > button {
-        background: linear-gradient(135deg, #0d9488 0%, #0ea5e9 100%) !important;
-        color: white !important;
-        border: none !important;
-        font-family: 'DM Sans', sans-serif !important;
-        font-weight: 600 !important;
-        font-size: 0.78rem !important;
-        letter-spacing: 0.05em !important;
-        border-radius: 20px !important;
-        padding: 0.3rem 1.1rem !important;
-        box-shadow: 0 2px 10px rgba(13,148,136,0.35) !important;
-        transition: all 0.2s ease !important;
-        height: 34px !important;
-        line-height: 1 !important;
-    }
-    .sm-navbar-btn-wrap .stButton > button:hover {
-        background: linear-gradient(135deg, #0f766e 0%, #0284c7 100%) !important;
-        box-shadow: 0 4px 16px rgba(13,148,136,0.45) !important;
-        transform: translateY(-1px) !important;
     }
 
     /* ─── Save Button ────────────────────────────────────── */
@@ -536,7 +493,7 @@ def save_overrides(
 def send_update_email(df: pd.DataFrame) -> tuple[bool, str]:
     """Send a schedule-update notification via Resend."""
     if not RESEND_API_KEY:
-        return False, "RESEND_API_KEY is not set. Add it to your .env file."
+        return False, "RESEND_API_KEY is not set. Add it to Streamlit secrets or a local .env file."
 
     today = date.today().strftime("%B %d, %Y")
     total = len(df)
@@ -642,11 +599,11 @@ def render_navbar(logo_path: Path) -> None:
     )
 
 
-def render_stat_cards(df: pd.DataFrame) -> None:
+def render_hero(df: pd.DataFrame) -> None:
     total = len(df)
     scheduled = int(df["Scheduled date"].notna().sum())
     unscheduled = total - scheduled
-    pct = int(scheduled / total * 100) if total > 0 else 0
+    past_due = int(df["_past_due"].sum()) if "_past_due" in df.columns else 0
 
     if "Sales" in df.columns:
         sales_val = pd.to_numeric(df["Sales"], errors="coerce").fillna(0).sum()
@@ -654,28 +611,34 @@ def render_stat_cards(df: pd.DataFrame) -> None:
     else:
         sales_display = "—"
 
+    today_str = date.today().strftime("%B %d, %Y")
+
     st.markdown(
         f"""
-        <div class="sm-cards">
-            <div class="sm-card blue">
-                <div class="sm-card-label">Total Orders</div>
-                <div class="sm-card-value">{total}</div>
-                <div class="sm-card-sub">pending shipments</div>
-            </div>
-            <div class="sm-card teal">
-                <div class="sm-card-label">Scheduled</div>
-                <div class="sm-card-value">{scheduled}</div>
-                <div class="sm-card-sub">{pct}% of orders</div>
-            </div>
-            <div class="sm-card amber">
-                <div class="sm-card-label">Needs Date</div>
-                <div class="sm-card-value">{unscheduled}</div>
-                <div class="sm-card-sub">awaiting schedule</div>
-            </div>
-            <div class="sm-card green">
-                <div class="sm-card-label">Total Sales</div>
-                <div class="sm-card-value">{sales_display}</div>
-                <div class="sm-card-sub">order value</div>
+        <div class="sm-hero">
+            <h1>SensiMedical Shipment Schedule</h1>
+            <div class="sm-hero-date">{today_str}</div>
+            <div class="sm-hero-stats">
+                <div class="sm-stat">
+                    <div class="sm-stat-value">{total}</div>
+                    <div class="sm-stat-label">Total Orders</div>
+                </div>
+                <div class="sm-stat">
+                    <div class="sm-stat-value teal">{scheduled}</div>
+                    <div class="sm-stat-label">Scheduled</div>
+                </div>
+                <div class="sm-stat">
+                    <div class="sm-stat-value amber">{unscheduled}</div>
+                    <div class="sm-stat-label">Needs Date</div>
+                </div>
+                <div class="sm-stat">
+                    <div class="sm-stat-value amber">{past_due}</div>
+                    <div class="sm-stat-label">Past Due</div>
+                </div>
+                <div class="sm-stat">
+                    <div class="sm-stat-value green">{sales_display}</div>
+                    <div class="sm-stat-label">Total Sales</div>
+                </div>
             </div>
         </div>
         """,
@@ -728,30 +691,8 @@ def main() -> None:
     # ─── Navbar ──────────────────────────────────────────────
     render_navbar(LOGO_PATH)
 
-    # ─── Send Update button (fixed top-right, overlays navbar) ───────────────
-    st.markdown('<div class="sm-navbar-btn-wrap">', unsafe_allow_html=True)
-    if st.button("✉ Send Update", key="send_update"):
-        ok, msg = send_update_email(df)
-        if ok:
-            st.toast("✓ Update email sent!", icon="✉️")
-        else:
-            st.toast(f"Failed: {msg}", icon="⚠️")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # ─── Page header ─────────────────────────────────────────
-    today_str = date.today().strftime("%B %d, %Y")
-    st.markdown(
-        f"""
-        <div class="sm-page-header">
-            <h1>Pending Orders — Schedule Manager</h1>
-            <p>SensiMedical™ Shipment Schedule · {today_str}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # ─── Stat cards ──────────────────────────────────────────
-    render_stat_cards(df)
+    # ─── Hero header + stats ──────────────────────────────────
+    render_hero(df)
 
     # ─── Table ───────────────────────────────────────────────
     st.markdown(
@@ -798,17 +739,24 @@ def main() -> None:
     edited_df = edited_display.drop(columns=["⚠️"], errors="ignore").copy()
     edited_df["order_key"] = df["order_key"].values
 
-    # ─── Save ────────────────────────────────────────────────
-    col_btn, col_hint = st.columns([1, 5])
-    with col_btn:
-        if st.button("💾  Save Changes"):
+    # ─── Save + Send Update ──────────────────────────────────
+    col_save, col_mid, col_send = st.columns([2, 6, 2])
+    with col_save:
+        if st.button("💾  Save Changes", use_container_width=True):
             n = save_overrides(base_df, edited_df, conn)
             if n > 0:
                 st.success(f"✓ Saved {n} updated row(s).")
             else:
                 st.info("No changes to save.")
-    with col_hint:
+    with col_mid:
         st.caption("Changes are stored locally and applied automatically across file versions.")
+    with col_send:
+        if st.button("✉  Send Update", use_container_width=True, key="send_update"):
+            ok, msg = send_update_email(df)
+            if ok:
+                st.toast("✓ Update email sent!", icon="✉️")
+            else:
+                st.toast(f"Failed: {msg}", icon="⚠️")
 
 
 if __name__ == "__main__":
