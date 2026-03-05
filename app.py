@@ -639,8 +639,8 @@ def render_navbar(logo_path: Path) -> None:
         <div class="sm-navbar">
             <div class="sm-navbar-brand">
                 {logo_html}
-                <span class="sm-navbar-title">Shipment Console</span>
             </div>
+            <div class="sm-navbar-center">Shipment Schedule Console</div>
         </div>
         """,
         unsafe_allow_html=True,
