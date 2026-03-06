@@ -28,9 +28,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Create credentials file from secret
+    - name: Create credentials and token files from secrets
       run: |
         echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" | base64 -d > credentials.json
+        echo "${{ secrets.TOKEN_PICKLE }}" | base64 -d > token.pickle
 
     - name: Create data directory
       run: mkdir -p data
@@ -47,9 +48,7 @@ jobs:
         SMTP_PORT: ${{ secrets.SMTP_PORT }}
         GIT_REMOTE: origin
         GIT_BRANCH: main
-      run: |
-        python oauth2_setup.py
-        python email_automation.py
+      run: python email_automation.py
 
     - name: Check for changes
       id: verify-changed-files
