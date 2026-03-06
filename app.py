@@ -693,7 +693,7 @@ def render_hero(df: pd.DataFrame) -> None:
     st.markdown(
         """
         <div class="sm-hero">
-            <h1>SensiMedical Shipment Schedule</h1>
+            <h1>Sensimedical Shipment Schedule</h1>
         </div>
         """,
         unsafe_allow_html=True,
@@ -745,7 +745,7 @@ def render_stat_cards(df: pd.DataFrame) -> None:
 
 def main() -> None:
     st.set_page_config(
-        page_title="SensiMedical™ – Pending Orders",
+        page_title="Sensimedical – Pending Orders",
         layout="wide",
         page_icon="📦",
     )
