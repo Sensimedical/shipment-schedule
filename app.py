@@ -633,7 +633,7 @@ def send_update_email(df: pd.DataFrame) -> tuple[bool, str]:
         </tbody>
       </table>
       <div style="background:#f8fafc;padding:14px 24px;border-radius:0 0 8px 8px;border-top:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;">
-        <span style="color:#94a3b8;font-size:0.75rem;">Sent automatically from SensiMedical Shipment Console</span>
+        <span style="color:#94a3b8;font-size:0.75rem;">Sent automatically from Sensimedical Pending Orders Shipment Console</span>
         <a href="https://sensimedical-shipment-schedule.streamlit.app/" style="display:inline-block;background-color:#0c1f3a;color:#ffffff;font-size:0.75rem;font-weight:600;text-decoration:none;padding:8px 16px;border-radius:6px;letter-spacing:0.03em;border:1px solid #0c1f3a;font-family:Arial,sans-serif;">View Console →</a>
       </div>
     </div>
