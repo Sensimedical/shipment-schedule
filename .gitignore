@@ -45,9 +45,6 @@ Thumbs.db
 *.log
 logs/
 
-# Temporary files
-*.tmp
-*.temp
-
-# Streamlit
-.streamlit/
+# OAuth2 credentials
+token.pickle
+credentials.json

@@ -28,24 +28,27 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
+    - name: Create credentials file from secret
+      run: |
+        echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" | base64 -d > credentials.json
+
     - name: Create data directory
       run: mkdir -p data
 
     - name: Run email automation
       env:
-        EMAIL_USER: ${{ secrets.EMAIL_USER }}
-        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        IMAP_SERVER: ${{ secrets.IMAP_SERVER }}
-        IMAP_PORT: ${{ secrets.IMAP_PORT }}
-        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-        SMTP_PORT: ${{ secrets.SMTP_PORT }}
         SEARCH_SUBJECT: ${{ secrets.SEARCH_SUBJECT }}
         SEARCH_SENDER: ${{ secrets.SEARCH_SENDER }}
         TARGET_FILENAME: ${{ secrets.TARGET_FILENAME }}
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
         GIT_REMOTE: origin
         GIT_BRANCH: main
       run: |
+        python oauth2_setup.py
         python email_automation.py
 
     - name: Check for changes

@@ -35,7 +35,7 @@ def generate_secret_commands():
 
     for secret in secrets:
         value = os.getenv(secret, '')
-        if value and value not in ['your-email@gmail.com', 'your-app-password']:
+        if value and value not in ['your-email@gmail.com', 'your-app-password', '', 'your-email@gmail.com']:
             print(f"gh secret set {secret} --body \"{value}\"")
         else:
             print(f"# TODO: Set {secret}")

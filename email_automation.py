@@ -1,15 +1,17 @@
-import imaplib
-import email
 import os
-from email.header import decode_header
+import pickle
 from pathlib import Path
-import pandas as pd
 from datetime import datetime, timedelta
+import pandas as pd
+import logging
 import git
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import logging
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+import base64
 
 # Configure logging
 logging.basicConfig(
@@ -17,26 +19,21 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('email_automation.log'),
-        logging.StreamHandler()  # Also log to console for GitHub Actions
+        logging.StreamHandler()
     ]
 )
 
 class EmailAutomation:
     def __init__(self):
-        # Email configuration - load from environment variables
-        self.imap_server = os.getenv('IMAP_SERVER', 'imap.gmail.com')
-        self.imap_port = int(os.getenv('IMAP_PORT', '993'))
-        self.email_user = os.getenv('EMAIL_USER')
-        self.email_password = os.getenv('EMAIL_PASSWORD')
-
-        # Search configuration
-        self.search_subject = os.getenv('SEARCH_SUBJECT', 'search results')
-        self.search_sender = os.getenv('SEARCH_SENDER', '')
-
         # File configuration
         self.base_dir = Path(__file__).parent
         self.data_dir = self.base_dir / "data"
         self.target_filename = os.getenv('TARGET_FILENAME', 'searchresults.xlsx')
+        self.token_path = self.base_dir / 'token.pickle'
+
+        # Search configuration
+        self.search_subject = os.getenv('SEARCH_SUBJECT', 'Sensi Medical Sales Open Order')
+        self.search_sender = os.getenv('SEARCH_SENDER', 'customercare@optimalmax.com')
 
         # Git configuration (optional)
         try:
@@ -50,77 +47,103 @@ class EmailAutomation:
 
         # Notification configuration
         self.notify_email = os.getenv('NOTIFY_EMAIL')
+        self.email_user = os.getenv('EMAIL_USER')
+        self.email_password = os.getenv('EMAIL_PASSWORD')
         self.smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
         self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
 
-    def connect_imap(self):
-        """Connect to IMAP server"""
+    def get_gmail_service(self):
+        """Get authenticated Gmail API service"""
         try:
-            mail = imaplib.IMAP4_SSL(self.imap_server, self.imap_port)
-            mail.login(self.email_user, self.email_password)
-            return mail
-        except Exception as e:
-            logging.error(f"Failed to connect to IMAP: {e}")
-            raise
+            creds = None
 
-    def search_emails(self, mail, days_back=1):
+            # Load existing token
+            if self.token_path.exists():
+                with open(self.token_path, 'rb') as token:
+                    creds = pickle.load(token)
+
+            # Refresh token if expired
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+
+            if not creds or not creds.valid:
+                logging.error("No valid Gmail credentials found. Run oauth2_setup.py first.")
+                return None
+
+            return build('gmail', 'v1', credentials=creds)
+
+        except Exception as e:
+            logging.error(f"Failed to get Gmail service: {e}")
+            return None
+
+    def search_emails(self, service, days_back=1):
         """Search for emails with XLS attachments"""
         try:
-            mail.select('inbox')
+            # Build search query
+            since_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
+            query = f'after:{since_date}'
 
-            # Calculate date range
-            since_date = (datetime.now() - timedelta(days=days_back)).strftime('%d-%b-%Y')
-
-            # Build search criteria
-            search_criteria = f'SINCE {since_date}'
             if self.search_subject:
-                search_criteria += f' SUBJECT "{self.search_subject}"'
+                query += f' subject:"{self.search_subject}"'
             if self.search_sender:
-                search_criteria += f' FROM "{self.search_sender}"'
+                query += f' from:"{self.search_sender}"'
 
-            status, messages = mail.search(None, search_criteria)
-            return messages[0].split() if status == 'OK' else []
+            query += ' has:attachment filename:(xls OR xlsx)'
+
+            logging.info(f"Searching with query: {query}")
+
+            results = service.users().messages().list(
+                userId='me',
+                q=query,
+                orderBy='newest',
+                maxResults=5
+            ).execute()
+
+            messages = results.get('messages', [])
+            logging.info(f"Found {len(messages)} matching emails")
+            return messages
 
         except Exception as e:
             logging.error(f"Failed to search emails: {e}")
             raise
 
-    def download_attachment(self, mail, email_id):
+    def download_attachment(self, service, message_id):
         """Download XLS attachment from email"""
         try:
-            status, msg_data = mail.fetch(email_id, '(RFC822)')
-            if status != 'OK':
-                return None
+            message = service.users().messages().get(userId='me', id=message_id, format='full').execute()
 
-            email_body = msg_data[0][1]
-            email_message = email.message_from_bytes(email_body)
+            headers = message['payload']['headers']
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Unknown')
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
 
-            # Check if email has attachments
-            for part in email_message.walk():
-                if part.get_content_maintype() == 'multipart':
-                    continue
-                if part.get('Content-Disposition') is None:
-                    continue
+            logging.info(f"Processing email from {sender}: {subject}")
 
-                filename = part.get_filename()
-                if filename and (filename.lower().endswith('.xls') or filename.lower().endswith('.xlsx') or 'sales open orders' in filename.lower()):
-                    # Decode filename if necessary
-                    filename, encoding = decode_header(filename)[0]
-                    if isinstance(filename, bytes):
-                        filename = filename.decode(encoding or 'utf-8')
+            # Find and download attachment
+            if 'parts' in message['payload']:
+                for part in message['payload']['parts']:
+                    if part['filename']:
+                        filename = part['filename']
+                        if filename.lower().endswith(('.xls', '.xlsx')):
+                            attachment_id = part['body']['attachmentId']
+                            attachment = service.users().messages().attachments().get(
+                                userId='me',
+                                messageId=message_id,
+                                id=attachment_id
+                            ).execute()
 
-                    # Save attachment
-                    filepath = self.data_dir / self.target_filename
-                    with open(filepath, 'wb') as f:
-                        f.write(part.get_payload(decode=True))
+                            data = base64.urlsafe_b64decode(attachment['data'])
+                            filepath = self.data_dir / self.target_filename
 
-                    logging.info(f"Downloaded attachment: {filename} -> {filepath}")
-                    return filepath
+                            with open(filepath, 'wb') as f:
+                                f.write(data)
+
+                            logging.info(f"Downloaded attachment: {filename} -> {filepath}")
+                            return filepath
 
             return None
 
         except Exception as e:
-            logging.error(f"Failed to download attachment from email {email_id}: {e}")
+            logging.error(f"Failed to download attachment from message {message_id}: {e}")
             return None
 
     def validate_excel_file(self, filepath):
@@ -139,6 +162,10 @@ class EmailAutomation:
     def commit_and_push(self, filepath):
         """Commit and push changes to git (optional - may be handled by CI/CD)"""
         try:
+            if not self.git_repo:
+                logging.info("Git repository not available - skipping git operations")
+                return True
+
             # Check if we should handle git operations ourselves
             if os.getenv('GITHUB_ACTIONS') == 'true':
                 logging.info("Running in GitHub Actions - skipping manual git operations")
@@ -165,11 +192,11 @@ class EmailAutomation:
 
         except Exception as e:
             logging.warning(f"Git operations failed (this may be expected in CI/CD): {e}")
-            return True  # Don't fail the automation if git push fails
+            return True
 
     def send_notification(self, success, message):
         """Send notification email"""
-        if not self.notify_email:
+        if not self.notify_email or not self.email_user or not self.email_password:
             return
 
         try:
@@ -178,7 +205,7 @@ class EmailAutomation:
             msg['To'] = self.notify_email
             msg['Subject'] = f"Email Automation {'Success' if success else 'Failed'}"
 
-            body = f"Email automation completed.\n\nStatus: {'Success' if success else 'Failed'}\nMessage: {message}\nTime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            body = f"Email automation completed.\n\nStatus: {'Success' if success else 'Failed'}\nMessage: {message}\nTime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
             msg.attach(MIMEText(body, 'plain'))
 
             server = smtplib.SMTP(self.smtp_server, self.smtp_port)
@@ -194,23 +221,31 @@ class EmailAutomation:
 
     def run_automation(self):
         """Main automation function"""
-        logging.info("Starting email automation")
+        logging.info("Starting email automation using Gmail API")
 
         try:
-            # Connect to email
-            mail = self.connect_imap()
+            # Ensure data directory exists
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+
+            # Get Gmail service
+            service = self.get_gmail_service()
+            if not service:
+                message = "Failed to authenticate with Gmail API"
+                logging.error(message)
+                self.send_notification(False, message)
+                return
 
             # Search for emails
-            email_ids = self.search_emails(mail)
-            if not email_ids:
+            messages = self.search_emails(service)
+            if not messages:
                 message = "No matching emails found"
                 logging.info(message)
                 self.send_notification(False, message)
                 return
 
             # Process most recent email
-            latest_email_id = email_ids[-1]  # Most recent
-            filepath = self.download_attachment(mail, latest_email_id)
+            latest_message_id = messages[0]['id']
+            filepath = self.download_attachment(service, latest_message_id)
 
             if not filepath:
                 message = "No XLS attachment found in emails"
@@ -235,8 +270,6 @@ class EmailAutomation:
                 logging.error(message)
                 self.send_notification(False, message)
 
-            mail.logout()
-
         except Exception as e:
             error_msg = f"Automation failed: {str(e)}"
             logging.error(error_msg)
@@ -244,5 +277,4 @@ class EmailAutomation:
 
 if __name__ == "__main__":
     automation = EmailAutomation()
-    automation.run_automation()</content>
-<parameter name="filePath">c:\Users\Usuario\OneDrive\Projects\BIAutomations\shipment-schedule\email_automation.py
+    automation.run_automation()
