@@ -23,6 +23,11 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Normalize line endings for scripts
+      run: |
+        # ensure no stray CR characters on Linux runner
+        sed -i 's/\r$//' email_automation.py
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
