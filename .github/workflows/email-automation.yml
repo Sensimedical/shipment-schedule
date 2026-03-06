@@ -35,8 +35,9 @@ jobs:
 
     - name: Create credentials and token files from secrets
       run: |
-        echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" | base64 -d > credentials.json
-        echo "${{ secrets.TOKEN_PICKLE }}" | base64 -d > token.pickle
+        # use printf to avoid stray newline characters
+        printf '%s' "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" | base64 --decode > credentials.json
+        printf '%s' "${{ secrets.TOKEN_PICKLE }}" | base64 --decode > token.pickle
 
     - name: Create data directory
       run: mkdir -p data
