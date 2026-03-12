@@ -48,3 +48,6 @@ logs/
 # OAuth2 credentials
 token.pickle
 credentials.json
+
+# Streamlit local secrets (never commit)
+.streamlit/secrets.toml

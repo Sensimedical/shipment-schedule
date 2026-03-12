@@ -1,20 +1,19 @@
 import base64
 import os
 import sqlite3
-import os
 from pathlib import Path
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
-# optional dependency for cloud database
-try:
-    import psycopg2
-except ImportError:
-    psycopg2 = None
-
 import pandas as pd
 import requests
 import streamlit as st
+
+# optional dependency for cloud database (installed as psycopg2-binary)
+try:
+    import psycopg2  # type: ignore[import-not-found]
+except Exception:
+    psycopg2 = None  # type: ignore[assignment]
 
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
@@ -22,8 +21,21 @@ DB_PATH = BASE_DIR / "orders.db"
 LOGO_PATH = BASE_DIR / "assets" / "sensimedical-logo.png"
 FILE_PATTERNS = ("Pending Orders *.csv", "Pending Orders *.xlsx", "*.csv", "*.xlsx")
 
+
+def _get_secret(name: str, default: str = "") -> str:
+    """
+    Read a secret from Streamlit project-level secrets if available,
+    otherwise fall back to environment variables.
+    """
+    try:
+        # Works when .streamlit/secrets.toml exists locally or on Streamlit Cloud
+        return st.secrets.get(name, default)  # type: ignore[attr-defined]
+    except Exception:
+        return os.getenv(name, default)
+
+
 # ── Resend email config ───────────────────────────────────────────────────────
-RESEND_API_KEY = st.secrets.get("RESEND_API_KEY", os.getenv("RESEND_API_KEY", ""))
+RESEND_API_KEY = _get_secret("RESEND_API_KEY", "")
 NOTIFY_EMAILS = [
     "alice.s@sensimedical.com",
     "elias.a@sensimedical.com",
@@ -376,7 +388,7 @@ def init_db() -> Any:
     SQLite file (`orders.db`). This allows multiple users/deployments to
     share overrides when the app is deployed.
     """
-    db_url = st.secrets.get("DATABASE_URL", os.getenv("DATABASE_URL", ""))
+    db_url = _get_secret("DATABASE_URL", "")
     if db_url:
         st.info("Using PostgreSQL database (shared overrides)")
         if psycopg2 is None:
