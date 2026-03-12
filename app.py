@@ -552,9 +552,14 @@ def save_overrides(
         comment = str(row["Comments"] or "")
         # If a date is now set (and it's not past-due itself) and the comment is
         # still one of the auto-filled placeholders, clear it automatically.
-        date_is_current = pd.notna(sd) and (
-            not isinstance(sd, date) or sd >= today
-        )
+        if pd.notna(sd):
+            if isinstance(sd, date):
+                sd_date = sd
+            else:
+                sd_date = pd.to_datetime(sd).date()
+            date_is_current = sd_date >= today
+        else:
+            date_is_current = False
         if date_is_current and comment.strip() in (NEW_ORDER_COMMENT, PAST_DUE_COMMENT):
             comment = ""
         modified_by = str(row.get("Modified by") or "").strip()
