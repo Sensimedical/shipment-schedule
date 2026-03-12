@@ -31,13 +31,23 @@ tier and an easy web UI. The steps below outline the minimal process:
    `postgresql://postgres:[YOUR-PASSWORD]@db.lpwzixfqprgrhzeyplxq.supabase.co:5432/postgres`.
 4. Within the same settings page, go to **API → Project URL** and note the
    base URL; you’ll need it for future Supabase client usage if you expand the
-   app.
-5. Add the `DATABASE_URL` to your Streamlit secrets or environment:
+   app.  
+   You can also copy the **anon/public** API key (often labeled *anon key*
+   or *publishing key*) from **API → Project API keys** if you plan to access
+   Supabase from client-side code or other services.
+5. Add the `DATABASE_URL` (and optionally the project URL and public key)
+   to your Streamlit secrets or environment:
    ```toml
    # .streamlit/secrets.toml
    DATABASE_URL = "postgresql://postgres:[YOUR-PASSWORD]@db.lpwzixfqprgrhzeyplxq.supabase.co:5432/postgres"
+   SUPABASE_URL = "https://db.lpwzixfqprgrhzeyplxq.supabase.co"
+   SUPABASE_KEY = "your-publishable-key-here"
    ```
-   On Windows you can also `setx DATABASE_URL "postgresql://postgres:[YOUR-PASSWORD]@db.lpwzixfqprgrhzeyplxq.supabase.co:5432/postgres"`.
+   On Windows you can also `setx` each variable separately.
+
+   These additional values aren’t required for the current version of the app
+   but will be useful if you later integrate the [supabase-py](https://github.com/supabase/supabase-py)
+   client or build a JavaScript frontend.
 
 6. **Install dependencies** (if not already):
    ```powershell

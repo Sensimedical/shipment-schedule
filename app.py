@@ -383,13 +383,9 @@ def init_db() -> Any:
             st.error("PostgreSQL support requires psycopg2; please add it to requirements.")
             st.stop()
         try:
-            try:
             conn = psycopg2.connect(db_url)
         except Exception as e:
             st.error(f"Failed to connect to PostgreSQL database. Please check your DATABASE_URL. Error: {e}")
-            st.stop()
-        except Exception as e:
-            st.error(f"Unable to connect to PostgreSQL: {e}")
             st.stop()
         cur = conn.cursor()
         cur.execute(
