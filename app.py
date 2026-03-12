@@ -930,11 +930,17 @@ def main() -> None:
     col_save, col_mid, col_send = st.columns([2, 6, 2])
     with col_save:
         if st.button("💾  Save Changes", use_container_width=True):
-            n = save_overrides(base_df, edited_df, conn, current_user=user_name or None)
-            if n > 0:
-                st.success(f"✓ Saved {n} updated row(s).")
+            if not user_name:
+                st.error("Please enter your name above so we can record who modified the schedule.")
             else:
-                st.info("No changes to save.")
+                n = save_overrides(base_df, edited_df, conn, current_user=user_name)
+                if n > 0:
+                    st.success(f"✓ Saved {n} updated row(s).")
+                    # Re-run so the table reloads from the database and shows
+                    # the updated 'Modified by' / 'Modified at' values.
+                    st.experimental_rerun()
+                else:
+                    st.info("No changes to save.")
     with col_mid:
         st.caption("Changes are stored locally and applied automatically across file versions.")
     with col_send:
