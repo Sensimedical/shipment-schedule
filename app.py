@@ -365,7 +365,9 @@ def get_latest_file() -> Path | None:
     return files[0] if files else None
 
 
-def init_db() -> sqlite3.Connection | "psycopg2.extensions.connection":
+from typing import Any
+
+def init_db() -> Any:
     """Initialize and return a database connection.
 
     Look for a cloud database URL in Streamlit secrets or the
