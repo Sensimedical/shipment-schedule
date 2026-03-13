@@ -581,22 +581,39 @@ def save_overrides(
     original: pd.DataFrame,
     edited: pd.DataFrame,
     conn: sqlite3.Connection,
-    current_user: str | None = None,
 ) -> int:
-    cols = ["order_key", "Scheduled date", "Comments"]
+    """
+    Persist overrides back to the database.
+
+    This version treats "Modified by" and "Modified at" as fully manual,
+    user-editable fields. We simply write whatever the user has typed in
+    those columns, without auto-populating names or timestamps.
+    """
+    cols = ["order_key", "Scheduled date", "Comments", "Modified by", "Modified at"]
     for c in cols:
         if c not in edited.columns:
             return 0
-    orig = original[cols].rename(columns={"Scheduled date": "_sd_orig", "Comments": "_com_orig"})
+    orig = original[cols].rename(
+        columns={
+            "Scheduled date": "_sd_orig",
+            "Comments": "_com_orig",
+            "Modified by": "_mb_orig",
+            "Modified at": "_ma_orig",
+        }
+    )
     merged = edited[cols].merge(
         orig[["order_key", "_sd_orig", "_com_orig"]],
         on="order_key",
     )
     merged["_sd_str"] = merged["Scheduled date"].astype(str)
     merged["_com_str"] = merged["Comments"].fillna("").astype(str)
+    merged["_mb_str"] = merged["Modified by"].fillna("").astype(str)
+    merged["_ma_str"] = merged["Modified at"].fillna("").astype(str)
     changed = merged[
         (merged["_sd_str"] != merged["_sd_orig"].astype(str))
         | (merged["_com_str"] != merged["_com_orig"].fillna("").astype(str))
+        | (merged["_mb_str"] != merged["_mb_orig"].fillna("").astype(str))
+        | (merged["_ma_str"] != merged["_ma_orig"].fillna("").astype(str))
     ]
 
     if changed.empty:
@@ -632,16 +649,9 @@ def save_overrides(
             date_is_current = False
         if date_is_current and comment.strip() in (NEW_ORDER_COMMENT, PAST_DUE_COMMENT):
             comment = ""
-        # Prefer the current session user name if provided; otherwise fall back
-        # to whatever is in the edited row.
-        if current_user:
-            modified_by = current_user.strip()
-        else:
-            modified_by = str(row.get("Modified by") or "").strip()
+        # "Modified by" / "Modified at" are taken exactly as typed by the user.
+        modified_by = str(row.get("Modified by") or "").strip()
         modified_at = str(row.get("Modified at") or "").strip()
-        # Auto-stamp time if user left Modified at blank
-        if not modified_at:
-            modified_at = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
         query = f"""
             INSERT INTO followup_overrides (order_key, follow_up, comments, modified_by, modified_at)
             VALUES ({ph}, {ph}, {ph}, {ph}, {ph})
@@ -899,7 +909,8 @@ def main() -> None:
         "Scheduled date": st.column_config.DateColumn("Scheduled date"),
         "⚠️": st.column_config.TextColumn("⚠️", disabled=True, width="small"),
         "Comments": st.column_config.TextColumn("Comments", width="large"),
-        "Modified by": st.column_config.TextColumn("Modified by", width="medium", disabled=True),
+        # Allow manual editing of these audit fields
+        "Modified by": st.column_config.TextColumn("Modified by", width="medium"),
         "Modified at": st.column_config.TextColumn("Modified at", width="medium"),
     }
     for col in display_df.columns:
@@ -924,17 +935,9 @@ def main() -> None:
     col_save, col_mid, col_send = st.columns([2, 6, 2])
     with col_save:
         if st.button("💾  Save Changes", use_container_width=True):
-            # Use the post-override dataframe (`df`) as the "original" baseline
-            # so that auto-filled placeholder comments/dates don't count as
-            # user edits. Only rows where the user actually changed the
-            # scheduled date or comments will be written back and get
-            # `Modified by` / `Modified at` updates.
             n = save_overrides(df, edited_df, conn)
             if n > 0:
                 st.success(f"✓ Saved {n} updated row(s).")
-                # Re-run so the table reloads from the database and shows
-                # the updated 'Modified by' / 'Modified at' values.
-                st.experimental_rerun()
             else:
                 st.info("No changes to save.")
     with col_mid:
